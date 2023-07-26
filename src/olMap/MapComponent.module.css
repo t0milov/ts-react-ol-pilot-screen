@@ -1,0 +1,11 @@
+.map {
+    width: 100vw;
+    height: 100vh;
+  }
+  .rotate-north {
+    top: 65px;
+    left: .5em;
+  }
+  .ol-touch .rotate-north {
+    top: 80px;
+  }
