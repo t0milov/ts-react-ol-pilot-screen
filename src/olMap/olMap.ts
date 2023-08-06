@@ -13,46 +13,14 @@ import VectorSource from 'ol/source/Vector';
 // import DroneImage from 'public/icons/drone.png';
 import { Coordinate } from 'ol/coordinate';
 import CircleStyle from 'ol/style/Circle';
-import {Control, defaults as defaultControls} from 'ol/control';
+import {Draw, Modify, Snap} from 'ol/interaction';
+import {get as getProj} from 'ol/proj.js';
+
 
 //  Заготовка под grpc
 interface PointLatLon {
   latutude: number;
   longitude: number;
-}
-
-class RotateNorthControl extends Control {
-	/**
-	 * @param {Object} [opt_options] Control options.
-	 */
-	constructor(opt_options: any) {
-		const options = opt_options || {};
-  
-		const button = document.createElement('button');
-		button.innerHTML = 'Draw';
-		button.setAttribute(
-			'style', 
-			'width: 60px; height: 30px; position: fixed; margin-left: 50%'
-		);
-		const element = document.createElement('div');
-		element.className = 'rotate-north ol-unselectable ol-control';
-		element.appendChild(button);
-
-		super({
-			element: element,
-			target: options.target,
-		});
-  
-		button.addEventListener('click', this.handleRotateNorth.bind(this), false);
-	}
-  
-	handleRotateNorth(): void {
-		console.log('AA!');
-		const map = this.getMap();
-		if (map !== null){
-			map.getView().setRotation(0);
-		}		
-	}
 }
 
 class OpenLayersCanvas {
@@ -66,6 +34,27 @@ class OpenLayersCanvas {
 
 	private detectedLayer = new VectorLayer({});
 	private detectedLayerSource = new VectorSource({});
+
+	private drawVectorSource = new VectorSource({});
+	private drawVector = new VectorLayer({
+		source: this.drawVectorSource,
+		style: {
+			'fill-color': 'rgba(255, 255, 255, 0.2)',
+			'stroke-color': '#ffcc33',
+			'stroke-width': 2,
+			'circle-radius': 7,
+			'circle-fill-color': '#ffcc33',
+		},
+	});
+
+	private  modify = new Modify({source: this.drawVectorSource});
+
+	private draw = new Draw({
+		source: this.drawVectorSource,
+		type: 'LineString',
+	});
+
+	private snap = new Snap({source: this.drawVectorSource});
 
 	private styles: any = {
 		drone: new Style({
@@ -88,19 +77,40 @@ class OpenLayersCanvas {
 	};
 
 	constructor() {
-		this.map = new Map({
-			// controls: defaultControls().extend([new RotateNorthControl(this)]),
-			layers: [
-				new TileLayer({
-					source: new OSM(),
+		
+		const proj = getProj('EPSG:3857');
+		if (proj !== null){
+			const extent = proj.getExtent().slice();
+			extent[0] += extent[0];
+			extent[2] += extent[2];
+
+			this.map = new Map({
+				layers: [
+					new TileLayer({
+						source: new OSM(),
+					}),
+				],
+				target: 'map',
+				view: new View({
+					center: [-11000000, 4600000],
+					zoom: 4,
+					extent,
 				}),
-			],
-			target: 'map',
-			view: new View({
-				center: [0, 0],
-				zoom: 3,
-			}),
-		});
+			});
+		}else {
+			this.map = new Map({
+				layers: [
+					new TileLayer({
+						source: new OSM(),
+					}),
+				],
+				target: 'map',
+				view: new View({
+					center: [0, 0],
+					zoom: 4,
+				}),
+			});
+		}
 
 		this.objectsLayer.setSource(this.objectsLayerSource);
 		this.objectsLayer.setStyle((feature) => this.styles[feature.get('type')]);
@@ -109,16 +119,19 @@ class OpenLayersCanvas {
 
 		this.map.addLayer(this.detectedLayer);
 		this.map.addLayer(this.objectsLayer);
+		this.map.addLayer(this.drawVector);
+
+
 
 		this.createObjectInObjectsLayer('Jet', 'drone');
 		// let mlat = 30;
 		// let mlon = 30;
 
-		// this.createObjectIndetectedLayer('polygon', [
-		// 	{ latutude: 30, longitude: 30 },
-		// 	{ latutude: 35, longitude: 30 },
-		// 	{ latutude: 30, longitude: 35 },
-		// ]);
+		this.createObjectInDetectedLayer('polygon', [
+			{ latutude: 30, longitude: 30 },
+			{ latutude: 35, longitude: 30 },
+			{ latutude: 30, longitude: 35 },
+		]);
 
 		// setInterval(() => {
 		// 	mlat += Math.random() / 1000;
@@ -130,8 +143,19 @@ class OpenLayersCanvas {
 		// 	this.moveCenter(mlat, mlon);
 		// 	this.rotateView(rotate + 0.5);
 		// }, 17);
+
+		this.map.addInteraction(this.modify);
+		this.addInteractions();
 	}
 
+	private addInteractions(): void {
+		this.draw = new Draw({
+			source: this.drawVectorSource,
+			type: 'LineString',
+		});
+		this.map.addInteraction(this.draw);
+		this.map.addInteraction(this.snap);
+	}
 
 	private createObjectInObjectsLayer(featureId: string, type: string): void {
 		const newFeature = new Feature({
