@@ -3,9 +3,9 @@ import OSM from 'ol/source/OSM';
 import TileLayer from 'ol/layer/Tile';
 import View from 'ol/View';
 import { Feature } from 'ol';
-import { Point, Polygon } from 'ol/geom';
+import { Point, Polygon, LineString } from 'ol/geom';
 import { fromLonLat } from 'ol/proj';
-import { Fill, Icon, Stroke, Style } from 'ol/style';
+import { Fill, Icon, RegularShape, Stroke, Style, Text } from 'ol/style';
 
 import VectorLayer from 'ol/layer/Vector';
 import VectorSource from 'ol/source/Vector';
@@ -16,6 +16,8 @@ import CircleStyle from 'ol/style/Circle';
 import {Draw, Modify, Snap} from 'ol/interaction';
 import {get as getProj} from 'ol/proj.js';
 
+import {getArea, getLength} from 'ol/sphere.js';
+
 
 //  Заготовка под grpc
 interface PointLatLon {
@@ -24,6 +26,92 @@ interface PointLatLon {
 }
 
 class OpenLayersCanvas {
+
+	private style = new Style({
+		fill: new Fill({
+			color: 'rgba(255, 255, 255, 0.2)',
+		}),
+		stroke: new Stroke({
+			color: 'rgba(0, 0, 0, 0.5)',
+			lineDash: [10, 10],
+			width: 2,
+		}),
+		image: new CircleStyle({
+			radius: 5,
+			stroke: new Stroke({
+				color: 'rgba(0, 0, 0, 0.7)',
+			}),
+			fill: new Fill({
+				color: 'rgba(255, 255, 255, 0.2)',
+			}),
+		}),
+	});
+
+	private segmentStyle = new Style({
+		text: new Text({
+			font: '12px Calibri,sans-serif',
+			fill: new Fill({
+				color: 'rgba(255, 255, 255, 1)',
+			}),
+			backgroundFill: new Fill({
+				color: 'rgba(0, 0, 0, 0.4)',
+			}),
+			padding: [2, 2, 2, 2],
+			textBaseline: 'bottom',
+			offsetY: -12,
+		}),
+		image: new RegularShape({
+			radius: 6,
+			points: 3,
+			angle: Math.PI,
+			displacement: [0, 8],
+			fill: new Fill({
+				color: 'rgba(0, 0, 0, 0.4)',
+			}),
+		}),
+	});
+
+	private labelStyle = new Style({
+		text: new Text({
+			font: '14px Calibri,sans-serif',
+			fill: new Fill({
+				color: 'rgba(255, 255, 255, 1)',
+			}),
+			backgroundFill: new Fill({
+				color: 'rgba(0, 0, 0, 0.7)',
+			}),
+			padding: [3, 3, 3, 3],
+			textBaseline: 'bottom',
+			offsetY: -15,
+		}),
+		image: new RegularShape({
+			radius: 8,
+			points: 3,
+			angle: Math.PI,
+			displacement: [0, 10],
+			fill: new Fill({
+				color: 'rgba(0, 0, 0, 0.7)',
+			}),
+		}),
+	});
+
+	private tipStyle = new Style({
+		text: new Text({
+			font: '12px Calibri,sans-serif',
+			fill: new Fill({
+				color: 'rgba(255, 255, 255, 1)',
+			}),
+			backgroundFill: new Fill({
+				color: 'rgba(0, 0, 0, 0.4)',
+			}),
+			padding: [2, 2, 2, 2],
+			textAlign: 'left',
+			offsetX: 15,
+		}),
+	});
+
+	private segmentStyles = [this.segmentStyle];
+
 	private radian = 57.295;
 
 	private mapObjects: any = {};
@@ -76,8 +164,36 @@ class OpenLayersCanvas {
 		}),
 	};
 
+	private tipPoint: any = {};
+
 	constructor() {
 		
+		// const segmentStyle = new Style({
+		// 	text: new Text({
+		// 		font: '12px Calibri,sans-serif',
+		// 		fill: new Fill({
+		// 			color: 'rgba(255, 255, 255, 1)',
+		// 		}),
+		// 		backgroundFill: new Fill({
+		// 			color: 'rgba(0, 0, 0, 0.4)',
+		// 		}),
+		// 		padding: [2, 2, 2, 2],
+		// 		textBaseline: 'bottom',
+		// 		offsetY: -12,
+		// 	}),
+		// 	image: new RegularShape({
+		// 		radius: 6,
+		// 		points: 3,
+		// 		angle: Math.PI,
+		// 		displacement: [0, 8],
+		// 		fill: new Fill({
+		// 			color: 'rgba(0, 0, 0, 0.4)',
+		// 		}),
+		// 	}),
+		// });
+  
+		// const segmentStyles = [segmentStyle];
+
 		const proj = getProj('EPSG:3857');
 		if (proj !== null){
 			const extent = proj.getExtent().slice();
@@ -122,6 +238,34 @@ class OpenLayersCanvas {
 		this.map.addLayer(this.drawVector);
 
 
+		const edges = new VectorSource({wrapX: false});
+		const edgesLayer = new VectorLayer({
+			source: edges,
+			style: function (f) {
+				const style = new Style({
+					stroke: new Stroke({
+						color: 'blue',
+						width: 1,
+					}),
+					text: new Text({
+						text: f.get('edge').id.toString(),
+						fill: new Fill({color: 'blue'}),
+						stroke: new Stroke({
+							color: 'white',
+							width: 2,
+						}),
+					}),
+				});
+				return [style];
+			},
+		});
+
+		// this.map.addLayer(edgesLayer);
+
+		const snap = new Snap({
+			source: edges,
+		});
+		this.map.addInteraction(snap);
 
 		this.createObjectInObjectsLayer('Jet', 'drone');
 		// let mlat = 30;
@@ -146,6 +290,76 @@ class OpenLayersCanvas {
 
 		this.map.addInteraction(this.modify);
 		this.addInteractions();
+	}
+
+	private formatLength(line: any): any {
+		const length = getLength(line);
+		let output;
+		if (length > 100) {
+			output = Math.round((length / 1000) * 100) / 100 + ' km';
+		} else {
+			output = Math.round(length * 100) / 100 + ' m';
+		}
+		return output;
+	}
+	
+	private formatArea(polygon: any): any {
+		const area = getArea(polygon);
+		let output;
+		if (area > 10000) {
+			output = Math.round((area / 1000000) * 100) / 100 + ' km\xB2';
+		} else {
+			output = Math.round(area * 100) / 100 + ' m\xB2';
+		}
+		return output;
+	}
+
+	private styleFunction(feature: any, segments: any, drawType: any, tip: any): any {
+		const styles = [this.style];
+		const geometry = feature.getGeometry();
+		const type = geometry.getType();
+		let point, label, line;
+		if (!drawType || drawType === type) {
+			if (type === 'Polygon') {
+				point = geometry.getInteriorPoint();
+				label = this.formatArea(geometry);
+				line = new LineString(geometry.getCoordinates()[0]);
+			} else if (type === 'LineString') {
+				point = new Point(geometry.getLastCoordinate());
+				label = this.formatLength(geometry);
+				line = geometry;
+			}
+		}
+		if (segments && line) {
+			let count = 0;
+			line.forEachSegment((a: any, b: any) => {
+				const segment = new LineString([a, b]);
+				const label = this.formatLength(segment);
+				if (this.segmentStyles.length - 1 < count) {
+					this.segmentStyles.push(this.segmentStyle.clone());
+				}
+				const segmentPoint = new Point(segment.getCoordinateAt(0.5));
+				this.segmentStyles[count].setGeometry(segmentPoint);
+				this.segmentStyles[count].getText().setText(label);
+				styles.push(this.segmentStyles[count]);
+				count++;
+			});
+		}
+		if (label) {
+			this.labelStyle.setGeometry(point);
+			this.labelStyle.getText().setText(label);
+			styles.push(this.labelStyle);
+		}
+		if (
+			tip &&
+			type === 'Point' &&
+			!this.modify.getOverlay().getSource().getFeatures().length
+		) {
+			this.tipPoint = geometry;
+			this.tipStyle.getText().setText(tip);
+			styles.push(this.tipStyle);
+		}
+		return styles;
 	}
 
 	private addInteractions(): void {
